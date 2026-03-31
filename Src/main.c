@@ -2397,16 +2397,17 @@ if(zero_crosses < 5){
 
                 } else {
                     /*
-                     * Fractional changeover: exit sine at ANY position.
+                     * Fractional changeover: finish current sector, then
+                     * hand off at the next sector boundary.
                      *
                      * Old code waited for phase_A_position == 0 (up to one
-                     * full electrical revolution of wasted open-loop time).
-                     * Now we map the current sine angle to the correct 6-step
-                     * sector and hand off immediately.
+                     * full electrical revolution = ~42ms on 14-pole motor).
+                     * Now we advance through the remaining steps in the
+                     * current 60-step sector (max ~7ms), then switch to
+                     * 6-step at a clean sector boundary where BEMF state
+                     * is predictable.
                      *
                      * Sector-to-step mapping derived from enter_sine_angle=180:
-                     *   enter: step N  -> phase_A = (N-1)*60 + 180
-                     *   exit:  phase_A -> pre-increment step (commutate adds 1)
                      *   pos 0-59   -> step 5  (commutate -> 6)
                      *   pos 60-119  -> step 6  (commutate -> 1)
                      *   pos 120-179 -> step 1  (commutate -> 2)
@@ -2416,17 +2417,34 @@ if(zero_crosses < 5){
                      */
                     static const uint8_t sine_sector_to_step[] = {5, 6, 1, 2, 3, 4};
 
+                    /* Advance sine to next sector boundary */
+                    int target = ((phase_A_position / 60) + 1) * 60;
+                    if (target >= 360) target = 0;
+
+                    while (phase_A_position != target) {
+                        advanceincrement();
+                        delayMicros(step_delay);
+                    }
+
                     do_once_sinemode = 1;
                     stepper_sine = 0;
                     running = 1;
                     old_routine = 1;
 
-                    isr_hot.step = sine_sector_to_step[phase_A_position / 60];
+                    isr_hot.step = sine_sector_to_step[target / 60];
 
-                    isr_hot.commutation_interval = 9000;
-                    isr_hot.average_interval = 9000;
-                    last_average_interval = isr_hot.average_interval;
-                    SET_INTERVAL_TIMER_COUNT(9000);
+                    /* Seed BEMF tracker with actual motor speed.
+                     * step_delay is μs/sine_step, 60 steps per sector.
+                     * INTERVAL_TIMER runs at 72MHz/(PSC+1) = 72/11 MHz.
+                     * sector_counts = step_delay * 60 * 72 / 11         */
+                    {
+                        uint32_t sector_counts = (uint32_t)step_delay * 60 * 72 / 11;
+                        if (sector_counts < 500) sector_counts = 500;
+                        isr_hot.commutation_interval = sector_counts;
+                        isr_hot.average_interval = sector_counts;
+                        last_average_interval = sector_counts;
+                    }
+                    SET_INTERVAL_TIMER_COUNT(0);
                     zero_crosses = 20;
                     prop_brake_active = 0;
 
