@@ -468,7 +468,7 @@ uint32_t total = 0;
 uint16_t readings[50];
 
 uint8_t bemf_timeout_happened = 0;
-uint8_t changeover_step = 5;
+// changeover_step removed — fractional changeover uses sine_sector_to_step[]
 uint8_t filter_level = 5;
 uint8_t running = 0;
 /* Refactor 3.1: isr_hot.advance and isr_hot.rising moved into isr_hot struct */
@@ -2396,32 +2396,45 @@ if(zero_crosses < 5){
                     e_rpm = 600 / step_delay; // in hundreds so 33 e_rpm is 3300 actual erpm
 
                 } else {
-                    do_once_sinemode = 1;
-                    advanceincrement();
-                    if (input > 200) {
-                        phase_A_position = 0;
-                        step_delay = 80;
-                    }
+                    /*
+                     * Fractional changeover: exit sine at ANY position.
+                     *
+                     * Old code waited for phase_A_position == 0 (up to one
+                     * full electrical revolution of wasted open-loop time).
+                     * Now we map the current sine angle to the correct 6-step
+                     * sector and hand off immediately.
+                     *
+                     * Sector-to-step mapping derived from enter_sine_angle=180:
+                     *   enter: step N  -> phase_A = (N-1)*60 + 180
+                     *   exit:  phase_A -> pre-increment step (commutate adds 1)
+                     *   pos 0-59   -> step 5  (commutate -> 6)
+                     *   pos 60-119  -> step 6  (commutate -> 1)
+                     *   pos 120-179 -> step 1  (commutate -> 2)
+                     *   pos 180-239 -> step 2  (commutate -> 3)
+                     *   pos 240-299 -> step 3  (commutate -> 4)
+                     *   pos 300-359 -> step 4  (commutate -> 5)
+                     */
+                    static const uint8_t sine_sector_to_step[] = {5, 6, 1, 2, 3, 4};
 
-                    delayMicros(step_delay);
-                    if (phase_A_position == 0) {
-                        stepper_sine = 0;
-                        running = 1;
-                        old_routine = 1;
-                        isr_hot.commutation_interval = 9000;
-                        isr_hot.average_interval = 9000;
-                        last_average_interval = isr_hot.average_interval;
-                        SET_INTERVAL_TIMER_COUNT(9000);
-                        zero_crosses = 20;
-                        prop_brake_active = 0;
-                        isr_hot.step = changeover_step;
-                        // comStep(isr_hot.step);// isr_hot.rising bemf on a same as position 0.
-                        if (eepromBuffer.stall_protection) {
-                            last_duty_cycle = stall_protect_minimum_duty;
-                        }
-                        commutate();
-                        generatePwmTimerEvent();
+                    do_once_sinemode = 1;
+                    stepper_sine = 0;
+                    running = 1;
+                    old_routine = 1;
+
+                    isr_hot.step = sine_sector_to_step[phase_A_position / 60];
+
+                    isr_hot.commutation_interval = 9000;
+                    isr_hot.average_interval = 9000;
+                    last_average_interval = isr_hot.average_interval;
+                    SET_INTERVAL_TIMER_COUNT(9000);
+                    zero_crosses = 20;
+                    prop_brake_active = 0;
+
+                    if (eepromBuffer.stall_protection) {
+                        last_duty_cycle = stall_protect_minimum_duty;
                     }
+                    commutate();
+                    generatePwmTimerEvent();
                 }
 
             } else {
