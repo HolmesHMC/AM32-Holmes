@@ -1360,11 +1360,11 @@ if (!stepper_sine && armed) {
                 if (phase_A_position > 359) {
                     phase_A_position -= 360;
                 }
-                phase_B_position = phase_A_position + 119;
+                phase_B_position = phase_A_position + 120;
                 if (phase_B_position > 359) {
                     phase_B_position -= 360;
                 }
-                phase_C_position = phase_A_position + 239;
+                phase_C_position = phase_A_position + 240;
                 if (phase_C_position > 359) {
                     phase_C_position -= 360;
                 }
