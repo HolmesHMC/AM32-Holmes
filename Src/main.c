@@ -537,6 +537,8 @@ int16_t phase_C_position;
 int16_t pwmSin_scaled[360];
 uint16_t step_delay = 100;
 char stepper_sine = 0;
+uint16_t mode_switch_lockout = 0;  /* counts down at 10kHz, prevents rapid sine/6step toggling */
+#define MODE_SWITCH_LOCKOUT_TICKS (LOOP_FREQUENCY_HZ * 3 / 10)  /* 300ms */
 
 
 char forward = 1;
@@ -1370,7 +1372,16 @@ if (!stepper_sine && armed) {
                 }
 
                 if (eepromBuffer.use_sine_start == 1) {
-                    stepper_sine = 1;
+                    /* Only re-enter sine when motor is slow enough for sine to
+                     * take over smoothly, or fully stopped.  ESCape32 approach:
+                     * sine and 6-step share the same loop, but AM32 does a hard
+                     * mode switch, so we must wait for deceleration.
+                     * commutation_interval > 9000 ≈ < 800 eRPM (safe for sine).
+                     * If still spinning fast, just coast with duty=0. */
+                    if ((!running || isr_hot.commutation_interval > 9000) && mode_switch_lockout == 0) {
+                        stepper_sine = 1;
+                        mode_switch_lockout = MODE_SWITCH_LOCKOUT_TICKS;
+                    }
                 }
                 duty_cycle_setpoint = 0;
             }
@@ -1411,6 +1422,7 @@ HOT_ISR_FN void tenKhzRoutine()
     tenkhzcounter++;
     ledcounter++;
     ramp_count++;
+    if (mode_switch_lockout > 0) mode_switch_lockout--;
     one_khz_loop_counter++;
     if (!armed_local) {
         if (cell_count == 0) {
@@ -2428,6 +2440,7 @@ if(zero_crosses < 5){
 
                     do_once_sinemode = 1;
                     stepper_sine = 0;
+                    mode_switch_lockout = MODE_SWITCH_LOCKOUT_TICKS;
                     running = 1;
                     old_routine = 1;
 
