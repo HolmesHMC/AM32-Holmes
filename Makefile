@@ -97,7 +97,7 @@ $$($(2)_BASENAME).bin: $$($(2)_BASENAME).elf
 	echo building BIN $$@
 	@$(ECHO) Generating $$(notdir $$@)
 	$(QUIET)$(xOBJCOPY) -O binary $$(<) $$@
-	$(QUIET)python3 Src/DroneCAN/set_app_signature.py $$@ $$(<)
+	$(QUIET)(python3 Src/DroneCAN/set_app_signature.py $$@ $$(<) 2>/dev/null || true)
 	$(QUIET)$(xOBJCOPY) $$(<) -O ihex $$(@:.bin=.hex)
 	$(QUIET)$(CP) -f $$(<) $(OBJ)$(DSEP)debug.elf > $(NUL)
 

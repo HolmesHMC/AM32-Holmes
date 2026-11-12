@@ -27,6 +27,7 @@
 #include "ADC.h"
 #include "targets.h"
 #include "common.h"
+#include "isr_hotdata.h"
 
 extern void transfercomplete();
 extern void PeriodElapsedCallback();
@@ -192,11 +193,11 @@ void DMA1_Channel4_5_IRQHandler(void)
 void ADC1_COMP_IRQHandler(void)
 {
   if (LL_EXTI_IsActiveFlag_0_31(LL_EXTI_LINE_21) != RESET) {
-      if((INTERVAL_TIMER->CNT) > ((average_interval>>1))){
+      if((INTERVAL_TIMER->CNT) > ((isr_hot.average_interval>>1))){
        EXTI->PR = EXTI_LINE;
       interruptRoutine();
   }else{ 
-      if (getCompOutputLevel() == rising){
+      if (getCompOutputLevel() == isr_hot.rising){
       EXTI->PR = EXTI_LINE;
   }
 }

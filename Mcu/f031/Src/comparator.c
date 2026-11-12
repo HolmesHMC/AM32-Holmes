@@ -6,6 +6,7 @@
  */
 
 #include "comparator.h"
+#include "isr_hotdata.h"
 #include "common.h"
 #include "targets.h"
 
@@ -22,6 +23,6 @@ void enableCompInterrupts() { EXTI->IMR |= (1 << current_EXTI_LINE); }
 
 void changeCompInput()
 {
-  EXTI->RTSR = rising << current_EXTI_LINE;
-  EXTI->FTSR = !rising << current_EXTI_LINE;
+  EXTI->RTSR = isr_hot.rising << current_EXTI_LINE;
+  EXTI->FTSR = !isr_hot.rising << current_EXTI_LINE;
 }

@@ -7,6 +7,7 @@
 
 #include "comparator.h"
 #include "common.h"
+#include "isr_hotdata.h"
 #include "targets.h"
 
 COMP_TypeDef* active_COMP = COMP1;
@@ -24,11 +25,11 @@ void enableCompInterrupts() { EXTI->IMR |= (1 << 21); }
 void changeCompInput()
 {
 
-if((average_interval < 400)){
+if((isr_hot.average_interval < 400)){
 COMP->CSR = COMP->CSR & ~(1<<2);
 }else{
 COMP->CSR  = COMP->CSR | 1<<2;
 }
-  EXTI->RTSR = !rising << 21;
-  EXTI->FTSR = rising << 21;
+  EXTI->RTSR = !isr_hot.rising << 21;
+  EXTI->FTSR = isr_hot.rising << 21;
 }

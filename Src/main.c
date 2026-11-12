@@ -864,7 +864,7 @@ void getBemfState()
     uint8_t current_state;
 #if defined(MCU_F031) || defined(MCU_G031)
     /* Single indexed lookup replaces 3-way if-chain (Refactor 3.4) */
-    const bemf_phase_t *ph = &bemf_phase_lut[isr_hot.step];
+    const bemf_phase_t *ph = &bemf_phase_lut[(uint8_t)isr_hot.step];
     current_state = (uint8_t)((*ph->idr_reg) & ph->pin);
 #else
     current_state = (uint8_t)(!getCompOutputLevel()); /* polarity reversed */
@@ -2067,6 +2067,12 @@ if(zero_crosses < 5){
                     dma_buffer[i] = 0;
                 }
                 signaltimeout = 0;             // reset timeout — ESC ready to re-arm
+#ifdef MCU_F031
+                /* F031 boards carry the old AM32 bootloader, which is only entered from a reset with the
+                 * signal line high. Without a reset here a running ESC can never be reached by a programmer
+                 * that is powered from the ESC. */
+                NVIC_SystemReset();
+#endif
             }
             if (signaltimeout > LOOP_FREQUENCY_HZ << 1) { // 2 second when not armed
                 // Soft state reset — no motor running, just clean up input state (2.9)
@@ -2095,6 +2101,12 @@ if(zero_crosses < 5){
                     dma_buffer[i] = 0;
                 }
                 signaltimeout = 0;             // reset timeout — ESC ready to re-arm
+#ifdef MCU_F031
+                /* F031 boards carry the old AM32 bootloader, which is only entered from a reset with the
+                 * signal line high. Without a reset here a running ESC can never be reached by a programmer
+                 * that is powered from the ESC. */
+                NVIC_SystemReset();
+#endif
             }
         }
 #ifdef USE_CUSTOM_LED
