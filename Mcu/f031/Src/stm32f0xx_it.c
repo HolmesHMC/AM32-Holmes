@@ -261,9 +261,12 @@ void TIM16_IRQHandler(void)
 
 void EXTI4_15_IRQHandler(void)
 {
-    if (LL_EXTI_IsActiveFlag_0_31(current_EXTI_LINE) != RESET) {
-        EXTI->PR = current_EXTI_LINE;
+    /* phase sense lines 4..14 */
+    uint32_t pending = EXTI->PR & 0x7FF0;
+    if (pending & (1 << current_EXTI_LINE)) {
         interruptRoutine();
+    } else if (pending) {
+        EXTI->PR = pending;
     }
 }
 
