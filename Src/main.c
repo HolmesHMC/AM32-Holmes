@@ -248,6 +248,7 @@ an settings option)
 #endif
 
 #include <version.h>
+#include "bench_log.h"
 
 HOT_ISR_FN void zcfoundroutine(void);
 extern void transfercomplete(); /* Refactor 3.2: declared in signal.c */
@@ -468,7 +469,6 @@ uint32_t total = 0;
 uint16_t readings[50];
 
 uint8_t bemf_timeout_happened = 0;
-// changeover_step removed — fractional changeover uses sine_sector_to_step[]
 uint8_t filter_level = 5;
 uint8_t running = 0;
 /* Refactor 3.1: isr_hot.advance and isr_hot.rising moved into isr_hot struct */
@@ -1487,6 +1487,7 @@ HOT_ISR_FN void tenKhzRoutine()
     // ADC/LVC must run in ALL modes including sine/stepper — moved outside stepper_sine guard
     if (one_khz_loop_counter > PID_LOOP_DIVIDER) {
         PROCESS_ADC_FLAG = 1;
+        bench_log_tick();
         if (stepper_sine) {
             one_khz_loop_counter = 0;  // reset counter in sine mode (six-isr_hot.step resets it below)
         }
@@ -1843,6 +1844,7 @@ int main(void)
     initAfterJump();
     checkDeviceInfo();
     initCorePeripherals();
+    bench_log_boot();
     enableCorePeripherals();
     loadEEpromSettings();
     initSineTable(); /* Refactor 3.5: pre-scale sine table after EEPROM load */
@@ -2024,6 +2026,8 @@ if(zero_crosses < 5){
 
        RELOAD_WATCHDOG_COUNTER();
 
+       bench_log_loop();
+
         if (ec_variable_pwm == 1) { /* Refactor 3.8: cached variable_pwm */
             tim1_arr = map(isr_hot.commutation_interval, 96, 200, TIMER1_MAX_ARR / 2,
                 TIMER1_MAX_ARR);
@@ -2067,12 +2071,11 @@ if(zero_crosses < 5){
                     dma_buffer[i] = 0;
                 }
                 signaltimeout = 0;             // reset timeout — ESC ready to re-arm
-#ifdef MCU_F031
-                /* F031 boards carry the old AM32 bootloader, which is only entered from a reset with the
-                 * signal line high. Without a reset here a running ESC can never be reached by a programmer
-                 * that is powered from the ESC. */
-                NVIC_SystemReset();
-#endif
+                /* line held high: a programmer is waiting for the bootloader */
+                if (getInputPinState()) {
+                    bench_log_save();
+                    NVIC_SystemReset();
+                }
             }
             if (signaltimeout > LOOP_FREQUENCY_HZ << 1) { // 2 second when not armed
                 // Soft state reset — no motor running, just clean up input state (2.9)
@@ -2101,12 +2104,11 @@ if(zero_crosses < 5){
                     dma_buffer[i] = 0;
                 }
                 signaltimeout = 0;             // reset timeout — ESC ready to re-arm
-#ifdef MCU_F031
-                /* F031 boards carry the old AM32 bootloader, which is only entered from a reset with the
-                 * signal line high. Without a reset here a running ESC can never be reached by a programmer
-                 * that is powered from the ESC. */
-                NVIC_SystemReset();
-#endif
+                /* line held high: a programmer is waiting for the bootloader */
+                if (getInputPinState()) {
+                    bench_log_save();
+                    NVIC_SystemReset();
+                }
             }
         }
 #ifdef USE_CUSTOM_LED
@@ -2419,63 +2421,46 @@ if(zero_crosses < 5){
                     delayMicros(step_delay);
                     e_rpm = 600 / step_delay; // in hundreds so 33 e_rpm is 3300 actual erpm
 
+                } else if (phase_A_position % 60) {
+                    /* keep stepping to the sector boundary */
+                    advanceincrement();
+                    delayMicros(step_delay);
                 } else {
-                    /*
-                     * Fractional changeover: finish current sector, then
-                     * hand off at the next sector boundary.
-                     *
-                     * Old code waited for phase_A_position == 0 (up to one
-                     * full electrical revolution = ~42ms on 14-pole motor).
-                     * Now we advance through the remaining steps in the
-                     * current 60-step sector (max ~7ms), then switch to
-                     * 6-step at a clean sector boundary where BEMF state
-                     * is predictable.
-                     *
-                     * Sector-to-step mapping derived from enter_sine_angle=180:
-                     *   pos 0-59   -> step 5  (commutate -> 6)
-                     *   pos 60-119  -> step 6  (commutate -> 1)
-                     *   pos 120-179 -> step 1  (commutate -> 2)
-                     *   pos 180-239 -> step 2  (commutate -> 3)
-                     *   pos 240-299 -> step 3  (commutate -> 4)
-                     *   pos 300-359 -> step 4  (commutate -> 5)
-                     */
-                    static const uint8_t sine_sector_to_step[] = {5, 6, 1, 2, 3, 4};
-
-                    /* Advance sine to next sector boundary */
-                    int target = ((phase_A_position / 60) + 1) * 60;
-                    if (target >= 360) target = 0;
-
-                    while (phase_A_position != target) {
-                        advanceincrement();
-                        delayMicros(step_delay);
-                    }
-
+                    /* sine to six-step at a sector boundary */
                     do_once_sinemode = 1;
                     stepper_sine = 0;
                     mode_switch_lockout = MODE_SWITCH_LOCKOUT_TICKS;
                     running = 1;
                     old_routine = 1;
 
-                    isr_hot.step = sine_sector_to_step[target / 60];
-
-                    /* Seed BEMF tracker with actual motor speed.
-                     * step_delay is μs/sine_step, 60 steps per sector.
-                     * INTERVAL_TIMER runs at 72MHz/(PSC+1) = 72/11 MHz.
-                     * sector_counts = step_delay * 60 * 72 / 11         */
-                    {
-                        uint32_t sector_counts = (uint32_t)step_delay * 60 * 72 / 11;
-                        if (sector_counts < 500) sector_counts = 500;
-                        isr_hot.commutation_interval = sector_counts;
-                        isr_hot.average_interval = sector_counts;
-                        last_average_interval = sector_counts;
+                    /* commutation step from the sine position */
+                    int16_t pos = phase_A_position - enter_sine_angle;
+                    if (pos < 0) {
+                        pos += 360;
                     }
+                    isr_hot.step = (uint8_t)(pos / 60) + 1;
+
+                    /* one sector = 60 sine steps; the interval timer counts half microseconds */
+                    uint32_t sector_counts = (uint32_t)step_delay * 120;
+                    if (sector_counts < 500) {
+                        sector_counts = 500;
+                    }
+                    if (sector_counts > 65535) {
+                        sector_counts = 65535;
+                    }
+                    isr_hot.commutation_interval = sector_counts;
+                    isr_hot.average_interval = sector_counts;
+                    last_average_interval = sector_counts;
+                    for (int i = 0; i < 6; i++) {
+                        isr_hot.commutation_intervals[i] = (uint16_t)sector_counts;
+                    }
+                    e_com_sum = 6 * sector_counts;
                     SET_INTERVAL_TIMER_COUNT(0);
-                    zero_crosses = 20;
+                    zero_crosses = 6;
                     prop_brake_active = 0;
-
-                    if (eepromBuffer.stall_protection) {
-                        last_duty_cycle = stall_protect_minimum_duty;
-                    }
+                    duty_cycle_setpoint = stall_protect_minimum_duty;
+                    last_duty_cycle = stall_protect_minimum_duty;
+                    stall_protection_adjust = 0;
                     commutate();
                     generatePwmTimerEvent();
                 }
